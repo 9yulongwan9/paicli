@@ -68,7 +68,7 @@ mvn test -DskipTests=false
 - 危险操作静态规则识别：`write_file`、`execute_command`、`create_project`、`revert_turn`
 - 三级危险等级：高危（`execute_command`）、中危（`write_file` / `create_project`）
 - 审批决策：批准 / 全部放行 / 拒绝 / 跳过 / 修改参数后执行
-- HITL 默认关闭，通过 `/hitl on` 启用
+- HITL 默认开启，可通过 `/hitl off` 临时关闭，`/hitl on` 重新启用
 - 新增 `/hitl` CLI 命令，支持 `/hitl on`、`/hitl off`、`/hitl`（查看状态）
 
 ### 第七期：异步执行 + 并行工具调用
@@ -299,7 +299,7 @@ Tips for getting started:
 - 🔒 危险操作静态规则识别（`write_file` / `execute_command` / `create_project` / `revert_turn`）
 - ⚠️ 三级危险等级展示（高危 / 中危 / 安全）
 - ✅ 审批决策：批准、全部放行、拒绝、跳过、修改参数后执行
-- 🔓 HITL 默认关闭，`/hitl on` 启用、`/hitl off` 关闭
+- 🔒 HITL 默认开启，`/hitl off` 关闭、`/hitl on` 重新启用
 
 ### 第七期
 
@@ -616,7 +616,7 @@ I
 - `/team` - 下一条任务使用 Multi-Agent 协作模式
 - `/team <任务>` - 直接用 Multi-Agent 协作模式执行这条任务
 - `/cancel` - 运行中请求取消当前任务；空闲时会提示当前没有正在运行的任务
-- `/hitl on` - 启用危险操作人工审批（HITL）
+- `/hitl on` - 启用/重新启用危险操作人工审批（HITL 默认开启）
 - `/hitl off` - 关闭 HITL 审批
 - `/hitl` - 查看 HITL 当前状态
 - `/mcp` - 查看所有 MCP server 状态

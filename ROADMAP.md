@@ -110,10 +110,10 @@
 **目标**：关键操作人工确认，安全可控
 
 **功能迭代**：
-- 危险操作静态规则识别（`write_file`、`execute_command`、`create_project`）
+- 危险操作静态规则识别（`write_file`、`execute_command`、`create_project`、`revert_turn`）
 - 三级危险等级（高危 / 中危 / 安全）
 - 审批决策：批准 / 全部放行 / 拒绝 / 跳过 / 修改参数后执行
-- HITL 默认关闭，`/hitl on|off` 运行时切换
+- HITL 默认开启，`/hitl off|on` 运行时切换
 - `HitlToolRegistry` 透明拦截层，HITL 关闭时与普通 `ToolRegistry` 行为完全相同
 
 **HITL 增强（后续补丁，归在本期叙事下）**：

@@ -100,6 +100,7 @@ import java.util.regex.Pattern;
  */
 public class Main {
     private static final String VERSION = "16.1.0";
+    static final boolean DEFAULT_HITL_ENABLED = true;
     private static final String ENV_FILE = ".env";
     private static final String LOG_DIR_PROPERTY = "paicli.log.dir";
     private static final String LOG_LEVEL_PROPERTY = "paicli.log.level";
@@ -210,7 +211,7 @@ public class Main {
 
         try (Terminal terminal = TerminalBuilder.builder().system(true).dumb(true).build()) {
             refreshTerminalColumns(terminal);
-            TerminalHitlHandler terminalHitlHandler = new TerminalHitlHandler(false);
+            TerminalHitlHandler terminalHitlHandler = new TerminalHitlHandler(DEFAULT_HITL_ENABLED);
             SwitchableHitlHandler hitlHandler = new SwitchableHitlHandler(terminalHitlHandler);
             HitlToolRegistry hitlToolRegistry = new HitlToolRegistry(hitlHandler);
             BrowserSession browserSession = new BrowserSession();
@@ -526,7 +527,7 @@ public class Main {
                         String payload = command.payload();
                         if ("on".equals(payload)) {
                             hitlHandler.setEnabled(true);
-                            ui.println("🔒 HITL 审批已启用：write_file / execute_command / create_project 执行前将请求人工确认\n");
+                            ui.println("🔒 HITL 审批已启用：危险内置工具和 MCP 工具执行前将请求人工确认\n");
                         } else if ("off".equals(payload)) {
                             hitlHandler.setEnabled(false);
                             hitlHandler.clearApprovedAll();
@@ -534,7 +535,7 @@ public class Main {
                         } else {
                             String status = hitlHandler.isEnabled() ? "启用" : "关闭";
                             ui.println("🔒 HITL 当前状态：" + status);
-                            ui.println("   /hitl on  - 启用人工审批");
+                            ui.println("   /hitl on  - 启用人工审批（默认已开启）");
                             ui.println("   /hitl off - 关闭人工审批\n");
                         }
                         renderer.updateStatus(statusInfo(reactAgent, mcpServerManager, skillRegistry, "idle"));

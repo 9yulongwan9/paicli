@@ -256,6 +256,11 @@ class CliCommandParserTest {
     }
 
     @Test
+    void defaultHitlIsEnabledOnStartup() {
+        assertEquals(true, Main.DEFAULT_HITL_ENABLED);
+    }
+
+    @Test
     void parsesPolicyStatusCommand() {
         CliCommandParser.ParsedCommand command = CliCommandParser.parse("/policy");
 
