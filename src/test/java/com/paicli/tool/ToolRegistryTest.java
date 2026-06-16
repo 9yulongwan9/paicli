@@ -106,6 +106,26 @@ class ToolRegistryTest {
     }
 
     @Test
+    void shouldUseRipgrepWhenAvailable(@TempDir Path tempDir) throws Exception {
+        String previous = System.getProperty("paicli.search.disable.rg");
+        System.clearProperty("paicli.search.disable.rg");
+        try {
+            Files.writeString(tempDir.resolve("Demo.java"),
+                    "class Demo { String marker = \"useRipgrepMarker\"; }\n");
+            ToolRegistry registry = new ToolRegistry();
+            registry.setProjectPath(tempDir.toString());
+
+            String result = registry.executeTool("grep_code",
+                    "{\"pattern\":\"useRipgrepMarker\",\"glob\":\"**/*.java\"}");
+
+            assertTrue(result.contains("(engine=rg)"), result);
+            assertTrue(result.contains("Demo.java:1"), result);
+        } finally {
+            restoreSystemProperty("paicli.search.disable.rg", previous);
+        }
+    }
+
+    @Test
     void shouldSkipCommonDependencyDirectoriesWhenGrepping(@TempDir Path tempDir) throws Exception {
         Files.createDirectories(tempDir.resolve("src"));
         Files.createDirectories(tempDir.resolve("node_modules/pkg"));
