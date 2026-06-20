@@ -379,6 +379,52 @@ class ToolRegistryTest {
         assertTrue(result.contains("长期记忆(global)"));
     }
 
+    @Test
+    void exploreCodebaseToolIsRegisteredWithExpectedSchema() {
+        ToolRegistry registry = new ToolRegistry();
+
+        assertTrue(registry.hasTool("explore_codebase"));
+
+        JsonNode params = registry.getToolDefinitions().stream()
+                .filter(t -> t.name().equals("explore_codebase"))
+                .findFirst()
+                .orElseThrow()
+                .parameters();
+
+        JsonNode properties = params.get("properties");
+        assertEquals("string", properties.get("task").get("type").asText());
+        assertEquals("string", properties.get("focus_paths").get("type").asText());
+
+        List<String> required = new ArrayList<>();
+        params.get("required").forEach(n -> required.add(n.asText()));
+        assertEquals(List.of("task"), required);
+    }
+
+    @Test
+    void exploreCodebaseReturnsDisabledMessageWhenRunnerNotInjected() {
+        ToolRegistry registry = new ToolRegistry();
+
+        String result = registry.executeTool("explore_codebase", "{\"task\":\"定位 grep_code 注册链路\"}");
+
+        assertTrue(result.contains("探索子 Agent 未启用"));
+    }
+
+    @Test
+    void exploreCodebaseDelegatesToInjectedRunner() {
+        ToolRegistry registry = new ToolRegistry();
+        List<String> calls = new ArrayList<>();
+        registry.setExploreRunner((task, focus) -> {
+            calls.add(task + "|" + focus);
+            return "## 结论\n已定位";
+        });
+
+        String result = registry.executeTool("explore_codebase",
+                "{\"task\":\"定位 grep_code 注册链路\",\"focus_paths\":\"src/main/java/com/paicli/tool\"}");
+
+        assertEquals(List.of("定位 grep_code 注册链路|src/main/java/com/paicli/tool"), calls);
+        assertTrue(result.contains("已定位"));
+    }
+
     private static void restoreSystemProperty(String key, String previous) {
         if (previous == null) {
             System.clearProperty(key);

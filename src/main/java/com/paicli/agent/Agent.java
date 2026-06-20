@@ -29,6 +29,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.io.OutputStream;
 import java.io.PrintStream;
 import java.nio.file.Path;
 import java.security.MessageDigest;
@@ -37,6 +38,9 @@ import java.util.HexFormat;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
 /**
@@ -44,6 +48,20 @@ import java.util.function.Supplier;
  */
 public class Agent {
     private static final Logger log = LoggerFactory.getLogger(Agent.class);
+
+    // explore_codebase 派发的子 Agent 各起一个 LLM 子会话；并发上限设得比 MAX_PARALLEL_TOOLS(4) 更小,
+    // 避免一轮里多个 explore_codebase 同时拉起多个 LLM 子会话。
+    private static final int MAX_PARALLEL_EXPLORERS = 2;
+    private static final long EXPLORE_ACQUIRE_TIMEOUT_SECONDS = 30;
+    // 子 Agent 探索过程默认折叠 / 静默：中间多轮 grep/read 不进主 transcript,只回传最终报告。
+    private static final PrintStream EXPLORER_SILENT_OUT = new PrintStream(OutputStream.nullOutputStream());
+
+    // 23.5 确定性预检：窗口内连续检索工具调用数超此阈值时,注入建议改用 explore_codebase 的提示。
+    static final int EXPLORE_PRECHECK_THRESHOLD = 6;
+    private static final Set<String> SEARCH_TOOL_NAMES = Set.of(
+            "grep_code", "glob_files", "read_file");
+    private int consecutiveSearchToolCalls;
+
     private LlmClient llmClient;
     private final ToolRegistry toolRegistry;
     private final List<LlmClient.Message> conversationHistory;
@@ -55,6 +73,7 @@ public class Agent {
     private Renderer renderer;
     private Supplier<Boolean> hitlEnabledSupplier = () -> false;
     private final PromptAssembler promptAssembler = PromptAssembler.createDefault();
+    private final Semaphore explorerSemaphore = new Semaphore(MAX_PARALLEL_EXPLORERS);
 
     public Agent(LlmClient llmClient) {
         this(llmClient, new ToolRegistry());
@@ -70,7 +89,49 @@ public class Agent {
         this.toolRegistry.setCurrentModel(llmClient.getProviderName(), llmClient.getModelName());
         this.memoryManager.setProjectPath(this.toolRegistry.getProjectPath());
         this.toolRegistry.setScopedMemorySaver(memoryManager::storeFact);
+        wireExploreRunner();
         conversationHistory.add(LlmClient.Message.system(buildSystemPrompt("")));
+    }
+
+    /**
+     * 把 explore_codebase 工具接到只读检索子 Agent（Phase 23.3 装配接线）。
+     *
+     * <p>装配方向合法（agent → tool）：{@code llmClient} 留在 lambda 闭包里,{@code ToolRegistry}
+     * 只认 {@link com.paicli.tool.CodeExploreRunner} 接口,不反向 import {@code SubAgent}。
+     * lambda 读 {@code this.llmClient} 字段而非捕获构造参数,确保 {@link #setLlmClient} 换模型后仍生效。
+     *
+     * <p>边界处理：并发上限（{@link #explorerSemaphore}）、子 Agent 失败 / 超 budget 时返回可读文本
+     * 而非抛出,主 Agent 可据此回退到自己检索。
+     */
+    private void wireExploreRunner() {
+        toolRegistry.setExploreRunner((task, focusPaths) -> {
+            boolean acquired = false;
+            try {
+                acquired = explorerSemaphore.tryAcquire(EXPLORE_ACQUIRE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+                if (!acquired) {
+                    return "探索子 Agent 并发已满，请稍后重试或自行用 grep_code / read_file 检索";
+                }
+                ToolRegistry readOnly = toolRegistry.readOnlyExploreView();
+                SubAgent explorer = new SubAgent("explorer", AgentRole.WORKER, llmClient, readOnly);
+                String prompt = ExploreContract.buildPrompt(task, focusPaths);
+                AgentMessage result = explorer.execute(AgentMessage.task("main", prompt), EXPLORER_SILENT_OUT);
+                String report = ExploreContract.clampReport(result.content());
+                if (result.type() == AgentMessage.Type.ERROR) {
+                    return "探索未完成（可自行检索）：" + report;
+                }
+                return report;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return "探索被中断：" + e.getMessage();
+            } catch (Exception e) {
+                log.warn("explore_codebase sub-agent failed", e);
+                return "探索失败（可自行检索）：" + e.getMessage();
+            } finally {
+                if (acquired) {
+                    explorerSemaphore.release();
+                }
+            }
+        });
     }
 
     public void setLlmClient(LlmClient llmClient) {
@@ -137,6 +198,7 @@ public class Agent {
                 userMessageContent,
                 Path.of(toolRegistry.getProjectPath())));
         injectFreshnessWebSearchIfNeeded(userInput);
+        consecutiveSearchToolCalls = 0;
         StringBuilder reasoningTranscript = new StringBuilder();
         StreamRenderer streamRenderer = new StreamRenderer(renderer());
 
@@ -213,6 +275,7 @@ public class Agent {
                         conversationHistory.add(LlmClient.Message.tool(toolResult.id(), toolResult.result()));
                     }
                     appendImageToolMessages(toolResults);
+                    maybeInjectExploreSuggestion(response.toolCalls(), toolResults, userInput);
                     pushStatus(budget, startNanos, "running");
 
                     // 继续循环，让 LLM 根据工具结果继续思考
@@ -305,6 +368,52 @@ public class Agent {
             }
         } catch (Exception e) {
             log.warn("conversationHistory compaction failed", e);
+        }
+    }
+
+    /**
+     * 23.5 确定性预检兜底：工具执行后统计窗口内连续检索工具调用数，
+     * 超阈值时注入一条建议，引导 LLM 改用 explore_codebase 派发后续检索。
+     * 只"建议"不强行劫持；用户明确要求"自己查/不要派发"时跳过。
+     */
+    void maybeInjectExploreSuggestion(List<LlmClient.ToolCall> toolCalls,
+                                     List<ToolExecutionResult> toolResults,
+                                     String userInput) {
+        if (!toolRegistry.hasTool("explore_codebase")) {
+            return;
+        }
+        if (userInput != null) {
+            String lower = userInput.toLowerCase(Locale.ROOT);
+            if (lower.contains("不要派发") || lower.contains("不用派发")
+                    || lower.contains("自己查") || lower.contains("自己搜")
+                    || lower.contains("不要 explore") || lower.contains("不用 explore")) {
+                consecutiveSearchToolCalls = 0;
+                return;
+            }
+        }
+
+        boolean allSearch = toolCalls != null && !toolCalls.isEmpty()
+                && toolCalls.stream().allMatch(tc -> SEARCH_TOOL_NAMES.contains(tc.function().name()));
+        if (allSearch) {
+            consecutiveSearchToolCalls += toolCalls.size();
+        } else {
+            consecutiveSearchToolCalls = 0;
+        }
+
+        boolean hasPartial = toolResults != null && toolResults.stream()
+                .anyMatch(r -> r.result() != null && r.result().contains("partial: true"));
+
+        if (consecutiveSearchToolCalls >= EXPLORE_PRECHECK_THRESHOLD || hasPartial && consecutiveSearchToolCalls >= 3) {
+            String hint = "💡 系统提示：检测到连续 " + consecutiveSearchToolCalls
+                    + " 次检索工具调用"
+                    + (hasPartial ? "（含 partial 截断结果）" : "")
+                    + "，上下文正在快速膨胀。建议改用 `explore_codebase` 工具将后续检索委托给只读子 Agent，"
+                    + "只回传精炼结论，避免主上下文被大量中间结果撑满。";
+            conversationHistory.add(LlmClient.Message.user(hint));
+            renderer().stream().println(AnsiStyle.subtle("  → " + hint));
+            log.info("Explore precheck triggered: consecutiveSearchCalls={}, hasPartial={}",
+                    consecutiveSearchToolCalls, hasPartial);
+            consecutiveSearchToolCalls = 0;
         }
     }
 
