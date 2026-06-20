@@ -88,6 +88,7 @@ public class ToolRegistry {
     private PathGuard pathGuard = new PathGuard(projectPath);
     private final AuditLog auditLog = new AuditLog();
     private SearchProvider searchProvider;
+    private CodeExploreRunner exploreRunner;            // 默认 null,未注入时 explore_codebase 优雅降级
     private WebFetcher webFetcher;
     private HtmlExtractor htmlExtractor;
     private NetworkPolicy networkPolicy;
@@ -157,6 +158,43 @@ public class ToolRegistry {
         return contextProfile;
     }
 
+    /**
+     * 构造给只读检索子 Agent 用的工具视图：物理排除写 / 执行 / 项目 / 回滚工具与
+     * {@code explore_codebase} 自身，只暴露 5 个只读检索工具。
+     *
+     * <p>采用“播种式拷贝”而非 {@code new ToolRegistry() + retainAll}：每个工具 handler 是构造时
+     * 注册的 lambda,闭包捕获的是「该实例自己的字段」。{@code new ToolRegistry()} 会把 {@code projectPath}
+     * 重置为 {@code user.dir},因此必须把检索相关状态显式复制过去,否则子 Agent 会搜错目录、PathGuard 拦错。
+     *
+     * <p>白名单只含只读工具 → 子 Agent 不可能触发 HITL,也不含 {@code explore_codebase} → 杜绝递归嵌套。
+     */
+    public ToolRegistry readOnlyExploreView() {
+        ToolRegistry view = new ToolRegistry();
+
+        // —— 快照能力：丢弃（只读视图用不到）——
+        // 必须避免 setProjectPath 在 !customSnapshotService 时对同一工程 close+forProject 重建,
+        // 否则会起第二个 SnapshotService 与主 Agent 争用同一影子仓（同 projectPath → 同 .git）。
+        // 先置 customSnapshotService=true 跳过那次重建,再关掉构造时默认建的(绑 user.dir)实例并丢弃。
+        view.customSnapshotService = true;
+        if (view.snapshotService != null) {
+            view.snapshotService.close();
+        }
+        view.snapshotService = null;
+
+        // —— 复制：必须与主 Agent 一致 ——
+        view.setProjectPath(this.projectPath);        // 级联重建 pathGuard / lspManager；因上面置真,跳过快照重建
+        view.setContextProfile(this.contextProfile);  // 压缩触发阈值与主 Agent 一致
+
+        // —— 故意不复制 searchProvider ——
+        // 白名单 5 个工具均不依赖它：search_code 走 new CodeRetriever(projectPath);
+        // searchProvider 只支撑未在白名单内的 web_search,复制属冗余。
+
+        // —— 裁剪：只保留只读检索工具 ——
+        view.tools.keySet().retainAll(Set.of(
+                "glob_files", "grep_code", "read_file", "list_dir", "search_code"));
+        return view;
+    }
+
     public void setCurrentModel(String provider, String model) {
         this.currentProvider = provider == null ? "" : provider.trim().toLowerCase(Locale.ROOT);
         this.currentModel = model == null ? "" : model.trim().toLowerCase(Locale.ROOT);
@@ -180,6 +218,11 @@ public class ToolRegistry {
 
     public void setScopedMemorySaver(BiConsumer<String, String> memorySaver) {
         this.memorySaver = memorySaver;
+    }
+
+    /** 注入代码检索子 Agent 的实现（装配层 lambda）；未注入时 explore_codebase 返回“未启用”。 */
+    public void setExploreRunner(CodeExploreRunner exploreRunner) {
+        this.exploreRunner = exploreRunner;
     }
 
     public void setSkillRegistry(SkillRegistry skillRegistry) {
@@ -344,6 +387,18 @@ public class ToolRegistry {
                         new Param("max_chars", "integer", "单次工具结果字符预算，默认 24000，上限 60000", false)
                 ),
                 args -> grepCode(args)
+        ));
+
+        tools.put("explore_codebase", new Tool(
+                "explore_codebase",
+                "委托只读子 Agent 做多轮代码检索；当预计需要多次 grep/read、位置不确定、需跨多个文件定位时优先用它，只返回精炼结论而非大量中间结果",
+                createParameters(
+                        new Param("task", "string", "自然语言检索目标，例如'找到 grep_code 工具的注册与执行链路'", true),
+                        new Param("focus_paths", "string", "可选，缩小搜索范围，例如 src/main/java/com/paicli/tool", false)
+                ),
+                args -> exploreRunner == null
+                        ? "探索子 Agent 未启用"
+                        : exploreRunner.explore(args.get("task"), args.get("focus_paths"))
         ));
     }
 

@@ -31,6 +31,7 @@
 - 当前项目内的文件和代码优先使用 `glob_files` / `grep_code` / `read_file` 现用现查：先找文件或符号，再按需读取具体行段。
 - 精确符号、文件名、字符串、命令入口、调用链定位优先 `grep_code` / `glob_files`，不要为了这类任务先走 `search_code`。
 - `grep_code` 返回 `partial: true` 或 `suggested_reads` 时，优先缩小 `path`/`glob`/`pattern` 或按建议调用 `read_file offset/limit` 读取命中附近上下文，不要一次性读取大文件。
+- 当预计需要多次 grep/read、符号/文件位置不确定、需跨多个文件定位时，优先调用 `explore_codebase` 委托只读子 Agent 做多轮检索，只回传精炼结论，避免主上下文被大量中间结果膨胀。小于三次 grep/read 就能定位的轻量检索仍然自己做，不用派发。
 - `search_code` 只作为语义辅助：适合用户描述很模糊、关键词难以确定、普通搜索多轮无果，或代码/文档/知识混合检索场景。
 - 代码库相关问题不要走 `web_search`，除非用户明确要查外部资料或实时信息。
 - 已有具体 URL 时直接 `web_fetch`，不要再 `web_search` 一次。
