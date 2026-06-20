@@ -1,26 +1,8 @@
 # PaiCLI
 
-一个成熟的 Java Agent CLI 产品，对标 Claude Code 作者为沉默王二，从第一期的 `ReAct` 单代理循环逐步演进到第十六期的 `TUI 产品化`。
+一个成熟的 Java Agent CLI 产品，对标 Claude Code ，从第一期的 `ReAct` 单代理循环逐步演进到第十六期的 `TUI 产品化`。
 
-当前进度：已完成第 16.1 期 inline 流式 TUI 形态修正、第 17 期 `LSP 诊断注入` MVP、第 18 期 `Git Side-History 快照与回滚` MVP、第 19 期 `Prompt 分层架构` MVP、第 20 期 `异步后台任务 + Runtime API` MVP、第 21 期 `图片复制粘贴输入` MVP。
 
-## 测试策略
-
-日常开发不需要每次都跑全量测试。`mvn clean package` 默认跳过测试，优先产出可手工验收的 jar；需要回归时按改动范围选择：
-
-```bash
-# 第 16 期终端 / TUI / inline renderer 冒烟
-mvn test -Pphase16-smoke
-
-# 常规快速回归，跳过外部进程 / 网络超时 / 命令超时类慢测试
-mvn test -Pquick
-
-# 代码搜索 deterministic golden set
-mvn test -Dtest=CodeSearchGoldenSetTest -DskipTests=false
-
-# 发版或大范围重构前再跑全量
-mvn test -DskipTests=false
-```
 
 ## 演进历程
 
