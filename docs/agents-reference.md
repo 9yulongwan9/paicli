@@ -94,7 +94,7 @@ scheme 白名单(http/https) / 主机黑名单(localhost/loopback/link-local/sit
 
 - 两道压缩：
   1. `ContextCompressor` 压缩 shortTermMemory
-  2. `ConversationHistoryCompactor` 压缩 conversationHistory（真正发给 LLM 的消息）
+  2. `ConversationHistoryCompactor` 将 conversationHistory（真正发给 LLM 的消息）压缩为固定 Markdown 结构摘要
 - 第二道压缩切割在 user message 边界，保留最近 3 个 user 起算的尾部
 - 三条路径(ReAct/Plan/SubAgent)都接入第二道压缩
 - 长期记忆只通过 `/save` 或用户明确要求保存

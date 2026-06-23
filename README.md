@@ -25,7 +25,7 @@
 - 短期记忆管理当前对话与工具结果
 - 长期记忆通过 `/save <事实>` 或用户明确说“记一下 / 记住”时的 `save_memory` 保存关键事实，默认项目级作用域，跨会话复用
 - 注入给模型的相关记忆只使用长期稳定事实，不把当前轮短期对话误当成“历史记忆”
-- 对话接近预算时自动做摘要压缩
+- 对话接近预算时由 `ConversationHistoryCompactor` 将实际发给模型的 `conversationHistory` 压缩为固定 Markdown 结构摘要
 - 新增 `/memory` 查看状态、`/memory list/search/delete/clear` 管理长期记忆、`/save` 手动保存事实；Agent 在用户明确说“记一下 / 记住”时可调用 `save_memory`
 
 ### 第四期：RAG 检索 + 代码库理解
@@ -96,7 +96,7 @@
 - `LlmClient` 声明模型能力：`maxContextWindow()`、`supportsPromptCaching()`、`promptCacheMode()`
 - GLM-5.1 默认 200k window，DeepSeek V4 默认 1M window，StepFun 默认 256k window，Kimi K2.6 默认 256k window，FreeLLMAPI 默认按 128k 保守预算
 - `AgentBudget` 按当前模型动态计算预算，默认 `80% * maxContextWindow`，仍可用系统属性覆盖
-- short / balanced / long 三种上下文模式：长上下文模式跳过摘要压缩，语义检索 topK 可提升到 20
+- short / balanced / long 三种上下文策略：`ConversationHistoryCompactor` 按当前模型窗口阈值把早期对话压缩成结构化恢复摘要，语义检索 topK 可随上下文策略提升到 20
 - `search_code` 未显式传 `top_k` 时按上下文模式自适应；默认代码定位仍优先实时 grep/read
 - 长上下文模式下自动把 MCP resources 的 URI / 描述索引注入 system prompt，不自动注入正文
 - inline 模式下 Token / cached input tokens / 估算成本 / 耗时进入底部状态栏，避免占用正文输出区
@@ -147,7 +147,7 @@ v16.1 抽出 `Renderer` 接口 + 三个实现：
 | **lanterna 全屏 TUI** | `PAICLI_RENDERER=lanterna`（或兼容旧 `PAICLI_TUI=true`） | v16 三栏全屏：文件树 + 对话流 + 状态栏 + 底部输入栏，HITL 模态弹窗 |
 | **plain 兜底** | `PAICLI_RENDERER=plain` | 纯 println，无折叠 / 状态栏，等价 v15 行为 |
 
-- 三种形态共享同一套 `Agent` / `ToolRegistry` / `MemoryManager` / MCP server / SkillRegistry / HITL handler，不创建孤立空会话
+- 三种形态共享同一套 `Agent` / `ToolRegistry` / MCP server / SkillRegistry / HITL handler，不创建孤立空会话
 - 普通输入走 ReAct；`/plan <任务>` 走 Plan-and-Execute；`/team <任务>` 走 Multi-Agent；`/cancel` 可取消运行中任务
 - 通用命令：`/clear`、`/context`、`/memory`、`/memory clear`、`/save <事实>`、`/hitl`、`/hitl on`、`/hitl off`、`/config`、`/exit`
 - 对话历史保存到 `~/.paicli/history/session_*.jsonl`
@@ -258,7 +258,7 @@ Tips for getting started:
 ### 第三期
 
 - 🧠 短期记忆、长期记忆与相关记忆检索
-- 📦 长对话摘要压缩与 Token 预算管理
+- 📦 `ConversationHistoryCompactor` 结构化长对话摘要压缩与 Token 预算管理
 - 🧮 长上下文动态预算、prompt cache 可见化与成本估算
 - 💾 `/memory` 与 `/save` 记忆管理入口
 
@@ -715,10 +715,9 @@ src/main/java/com/paicli
 │   ├── MemoryEntry.java        # 记忆条目
 │   ├── ConversationMemory.java # 短期记忆
 │   ├── LongTermMemory.java     # 长期记忆
-│   ├── ContextCompressor.java  # 上下文压缩
+│   ├── ConversationHistoryCompactor.java # conversationHistory 结构化摘要压缩
 │   ├── TokenBudget.java        # Token 预算管理
-│   ├── MemoryRetriever.java    # 记忆检索
-│   └── MemoryManager.java      # 记忆门面类
+│   └── MemoryRetriever.java    # 记忆检索
 ├── plan/
 │   ├── Task.java               # 任务定义
 │   ├── ExecutionPlan.java      # 执行计划

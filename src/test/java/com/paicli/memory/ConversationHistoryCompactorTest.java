@@ -155,6 +155,34 @@ class ConversationHistoryCompactorTest {
         assertEquals(before, history.size());
     }
 
+    @Test
+    void summaryPromptUsesStructuredRecoverySections() {
+        CapturingClient client = new CapturingClient("STRUCTURED SUMMARY");
+        ConversationHistoryCompactor c = new ConversationHistoryCompactor(client, 2);
+        List<LlmClient.Message> history = new ArrayList<>();
+        history.add(LlmClient.Message.system("S"));
+        for (int i = 0; i < 5; i++) {
+            history.add(LlmClient.Message.user("Q" + i + " " + longText(2_000)));
+            history.add(LlmClient.Message.assistant("A" + i));
+        }
+
+        boolean compacted = c.compactIfNeeded(history, 100);
+
+        assertTrue(compacted);
+        String prompt = client.lastMessages.get(1).content();
+        assertTrue(prompt.contains("## Primary Request and Intent"));
+        assertTrue(prompt.contains("## Current Work"));
+        assertTrue(prompt.contains("## Pending Tasks"));
+        assertTrue(prompt.contains("## All User Messages"));
+        assertTrue(prompt.contains("## Key Technical Concepts"));
+        assertTrue(prompt.contains("## Files and Code Sections"));
+        assertTrue(prompt.contains("## Problem Solving"));
+        assertTrue(prompt.contains("## Errors and Fixes"));
+        assertTrue(prompt.contains("## Optional Next Step"));
+        assertTrue(prompt.contains("按时间顺序列出所有非 tool result 的用户消息"));
+        assertTrue(prompt.contains("不要遗漏用户明确要求、限制、否定条件"));
+    }
+
     private static String longText(int chars) {
         StringBuilder sb = new StringBuilder(chars);
         for (int i = 0; i < chars; i++) sb.append('x');
@@ -175,6 +203,36 @@ class ConversationHistoryCompactorTest {
         protected String summarize(List<LlmClient.Message> messages) throws IOException {
             summarizeCalls.incrementAndGet();
             return mockSummary;
+        }
+    }
+
+    private static class CapturingClient implements LlmClient {
+        private final String response;
+        private List<Message> lastMessages = List.of();
+
+        private CapturingClient(String response) {
+            this.response = response;
+        }
+
+        @Override
+        public ChatResponse chat(List<Message> messages, List<Tool> tools) {
+            this.lastMessages = List.copyOf(messages);
+            return new ChatResponse("assistant", response, null, 10, 5);
+        }
+
+        @Override
+        public ChatResponse chat(List<Message> messages, List<Tool> tools, StreamListener listener) {
+            return chat(messages, tools);
+        }
+
+        @Override
+        public String getModelName() {
+            return "test";
+        }
+
+        @Override
+        public String getProviderName() {
+            return "test";
         }
     }
 }
